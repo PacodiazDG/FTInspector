@@ -67,7 +67,7 @@ void *handle_client(void *arg) {
     }
 
     pthread_t thread1, thread2;
-    int *client_to_server = malloc(2 * sizeof(int));
+    int *client_to_server = malloc(2  * sizeof(int));
     int *server_to_client = malloc(2 * sizeof(int));
     client_to_server[0] = client_sock; client_to_server[1] = forward_sock;
     server_to_client[0] = forward_sock; server_to_client[1] = client_sock;
