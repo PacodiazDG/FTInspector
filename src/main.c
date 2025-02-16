@@ -15,7 +15,7 @@
 
 void get_original_dst(int sock, char *ip_str, int *port) {
   struct sockaddr_in addr;
-  socklen_t addr_len = sizeof(addr);
+  socklen_t addr_len = sizeof(addr); 
   getsockopt(sock, SOL_IP, SO_ORIGINAL_DST, &addr, &addr_len);
   *port = ntohs(addr.sin_port);
   inet_ntop(AF_INET, &addr.sin_addr, ip_str, INET_ADDRSTRLEN);
