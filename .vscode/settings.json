@@ -4,6 +4,8 @@
         "net.h": "c",
         "stdio.h": "c",
         "tcpproxy.h": "c",
-        "stdlib.h": "c"
+        "stdlib.h": "c",
+        "socket.h": "c",
+        "netfilter_ipv4.h": "c"
     }
 }

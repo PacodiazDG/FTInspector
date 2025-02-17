@@ -14,7 +14,7 @@
 #define MAX_EVENTS 10
 #define BUFFER_SIZE 1024
 
-void get_original_dst(int client_fd);
+void get_original_dst(int client_fd, struct sockaddr_in *original_dst);
 int create_server_socket();
 void configure_server_socket(int server_fd);
 void bind_server_socket(int server_fd, struct sockaddr_in *server_addr);
