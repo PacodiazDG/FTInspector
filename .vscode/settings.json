@@ -1,0 +1,9 @@
+{
+    "files.associations": {
+        "errno.h": "c",
+        "net.h": "c",
+        "stdio.h": "c",
+        "tcpproxy.h": "c",
+        "stdlib.h": "c"
+    }
+}
