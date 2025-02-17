@@ -97,6 +97,9 @@ void *handle_client(void *arg) {
     while (1) {
         int nfds = epoll_wait(epoll_fd, events, MAX_EVENTS, -1);
         if (nfds == -1) {
+            if (errno == EINTR) {
+                continue; // Retry if interrupted by signal
+            }
             perror("epoll_wait");
             break;
         }
@@ -106,9 +109,24 @@ void *handle_client(void *arg) {
             int dst_fd = (src_fd == client_fd) ? dest_fd : client_fd;
 
             while ((n = read(src_fd, buffer, BUFFER_SIZE)) > 0) {
-                if (write(dst_fd, buffer, n) != n) {
-                    perror("write");
-                    break;
+                int total_written = 0;
+                while (total_written < n) {
+                    int written = write(dst_fd, buffer + total_written, n - total_written);
+                    if (written == -1) {
+                        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                            // Wait until the socket is ready for writing
+                            struct epoll_event ev;
+                            ev.events = EPOLLOUT;
+                            ev.data.fd = dst_fd;
+                            epoll_ctl(epoll_fd, EPOLL_CTL_MOD, dst_fd, &ev);
+                            epoll_wait(epoll_fd, &ev, 1, -1);
+                            continue;
+                        } else {
+                            perror("write");
+                            break;
+                        }
+                    }
+                    total_written += written;
                 }
             }
 
@@ -191,7 +209,10 @@ void handle_connections(int epoll_fd, int server_fd) {
     while (1) {
         int nfds = epoll_wait(epoll_fd, events, MAX_EVENTS, -1);
         if (nfds == -1) {
-            perror("Error en epoll_wait");
+            if (errno == EINTR) {
+                continue; // Retry if interrupted by signal
+            }
+            perror("epoll_wait");
             break;
         }
 
