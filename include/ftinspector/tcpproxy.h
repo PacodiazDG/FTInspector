@@ -11,7 +11,7 @@
 #include <linux/netfilter_ipv4.h> // Para SO_ORIGINAL_DST
 
 #define SERVER_PORT 8080
-#define MAX_EVENTS 10
+#define MAX_EVENTS 500
 #define BUFFER_SIZE 1024
 
 void get_original_dst(int client_fd, struct sockaddr_in *original_dst);

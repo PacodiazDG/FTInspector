@@ -3,9 +3,9 @@
     "configurations": [
       {
         "name": "Debug MiProyecto",
-        "type": "cppvsdbg",
+        "type": "cppdbg",
         "request": "launch",
-        "program": "${workspaceFolder}/build/MiEjecutable.exe",  // Ruta al ejecutable
+        "program": "${workspaceFolder}/build/MiEjecutable",  // Ruta al ejecutable
         "args": [],
         "stopAtEntry": false,
         "cwd": "${workspaceFolder}",

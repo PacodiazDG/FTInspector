@@ -6,6 +6,7 @@
         "tcpproxy.h": "c",
         "stdlib.h": "c",
         "socket.h": "c",
-        "netfilter_ipv4.h": "c"
+        "netfilter_ipv4.h": "c",
+        "unistd.h": "c"
     }
 }

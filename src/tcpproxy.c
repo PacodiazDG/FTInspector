@@ -12,7 +12,7 @@
 #include <fcntl.h>
 
 #define THREAD_POOL_SIZE 4
-#define MAX_EVENTS 10
+#define MAX_EVENTS 500
 #define BUFFER_SIZE 1024
 #define SERVER_PORT 8080
 
