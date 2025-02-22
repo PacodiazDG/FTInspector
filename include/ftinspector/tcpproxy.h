@@ -12,7 +12,7 @@
 
 #define SERVER_PORT 8080
 #define MAX_EVENTS 500
-#define BUFFER_SIZE 1024
+#define BUFFER_SIZE 94192
 
 void get_original_dst(int client_fd, struct sockaddr_in *original_dst);
 int create_server_socket();
@@ -21,5 +21,5 @@ void bind_server_socket(int server_fd, struct sockaddr_in *server_addr);
 void start_listening(int server_fd);
 int create_epoll_instance();
 void register_server_socket_in_epoll(int epoll_fd, int server_fd);
-void handle_connections(int epoll_fd, int server_fd);
+void handle_connections(int server_fd);
 void start_proxy();

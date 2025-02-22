@@ -6,14 +6,16 @@
 #include <string.h>
 #include <unistd.h>
 #include <arpa/inet.h>
-#include <sys/epoll.h>
 #include <netinet/tcp.h>
 #include <netinet/ip.h>
 #include <fcntl.h>
+#include <sys/sendfile.h>
+#include <liburing.h>
+#include <poll.h>
 
 #define THREAD_POOL_SIZE 4
-#define MAX_EVENTS 500
-#define BUFFER_SIZE 1024
+#define QUEUE_DEPTH 256
+#define BUFFER_SIZE 94192  
 #define SERVER_PORT 8080
 
 int set_non_blocking(int fd) {
@@ -66,82 +68,88 @@ void *handle_client(void *arg) {
     set_non_blocking(client_fd);
     set_non_blocking(dest_fd);
 
-    int epoll_fd = epoll_create1(0);
-    if (epoll_fd == -1) {
-        perror("epoll_create1");
-        close(client_fd);
-        close(dest_fd);
-        return NULL;
-    }
+    struct io_uring ring;
+    io_uring_queue_init(QUEUE_DEPTH, &ring, 0);
 
-    struct epoll_event ev, events[MAX_EVENTS];
-    ev.events = EPOLLIN | EPOLLET;
-    ev.data.fd = client_fd;
-    if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, client_fd, &ev) == -1) {
-        perror("epoll_ctl client_fd");
-        close(client_fd);
-        close(dest_fd);
-        close(epoll_fd);
-        return NULL;
-    }
+    struct io_uring_sqe *sqe;
+    struct io_uring_cqe *cqe;
 
-    ev.data.fd = dest_fd;
-    if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, dest_fd, &ev) == -1) {
-        perror("epoll_ctl dest_fd");
-        close(client_fd);
-        close(dest_fd);
-        close(epoll_fd);
-        return NULL;
-    }
+    // Add client_fd to the ring
+    sqe = io_uring_get_sqe(&ring);
+    io_uring_prep_poll_add(sqe, client_fd, POLLIN);
+    io_uring_sqe_set_data(sqe, (void *)(intptr_t)client_fd);
+    io_uring_submit(&ring);
+
+    // Add dest_fd to the ring
+    sqe = io_uring_get_sqe(&ring);
+    io_uring_prep_poll_add(sqe, dest_fd, POLLIN);
+    io_uring_sqe_set_data(sqe, (void *)(intptr_t)dest_fd);
+    io_uring_submit(&ring);
 
     while (1) {
-        int nfds = epoll_wait(epoll_fd, events, MAX_EVENTS, -1);
-        if (nfds == -1) {
-            if (errno == EINTR) {
-                continue; // Retry if interrupted by signal
-            }
-            perror("epoll_wait");
-            break;
-        }
+        io_uring_wait_cqe(&ring, &cqe);
+        int src_fd = (int)(intptr_t)io_uring_cqe_get_data(cqe);
+        int dst_fd = (src_fd == client_fd) ? dest_fd : client_fd;
 
-        for (int i = 0; i < nfds; i++) {
-            int src_fd = events[i].data.fd;
-            int dst_fd = (src_fd == client_fd) ? dest_fd : client_fd;
-
+        if (cqe->res & POLLIN) {
             while ((n = read(src_fd, buffer, BUFFER_SIZE)) > 0) {
                 int total_written = 0;
                 while (total_written < n) {
                     int written = write(dst_fd, buffer + total_written, n - total_written);
                     if (written == -1) {
                         if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                            // Wait until the socket is ready for writing
-                            struct epoll_event ev;
-                            ev.events = EPOLLOUT;
-                            ev.data.fd = dst_fd;
-                            epoll_ctl(epoll_fd, EPOLL_CTL_MOD, dst_fd, &ev);
-                            epoll_wait(epoll_fd, &ev, 1, -1);
-                            continue;
+                            // Modify io_uring to monitor for write readiness
+                            sqe = io_uring_get_sqe(&ring);
+                            io_uring_prep_poll_add(sqe, dst_fd, POLLOUT);
+                            io_uring_sqe_set_data(sqe, (void *)(intptr_t)dst_fd);
+                            io_uring_submit(&ring);
+                            break;
                         } else {
                             perror("write");
-                            break;
+                            // Handle error
                         }
+                    } else {
+                        total_written += written;
                     }
-                    total_written += written;
                 }
             }
-
-            if (n == 0 || (n == -1 && errno != EAGAIN)) {
-                close(client_fd);
-                close(dest_fd);
-                close(epoll_fd);
-                return NULL;
+        } else if (cqe->res & POLLOUT) {
+            // Handle write events (resume writing)
+            while ((n = read(src_fd, buffer, BUFFER_SIZE)) > 0) {
+                int total_written = 0;
+                while (total_written < n) {
+                    int written = write(dst_fd, buffer + total_written, n - total_written);
+                    if (written == -1) {
+                        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                            // Modify io_uring to monitor for write readiness
+                            sqe = io_uring_get_sqe(&ring);
+                            io_uring_prep_poll_add(sqe, dst_fd, POLLOUT);
+                            io_uring_sqe_set_data(sqe, (void *)(intptr_t)dst_fd);
+                            io_uring_submit(&ring);
+                            break;
+                        } else {
+                            perror("write");
+                            // Handle error
+                        }
+                    } else {
+                        total_written += written;
+                    }
+                }
             }
         }
+
+        // Re-arm the event
+        sqe = io_uring_get_sqe(&ring);
+        io_uring_prep_poll_add(sqe, src_fd, POLLIN);
+        io_uring_sqe_set_data(sqe, (void *)(intptr_t)src_fd);
+        io_uring_submit(&ring);
+
+        io_uring_cqe_seen(&ring, cqe);
     }
 
     close(client_fd);
     close(dest_fd);
-    close(epoll_fd);
+    io_uring_queue_exit(&ring);
     return NULL;
 }
 
@@ -180,74 +188,41 @@ void start_listening(int server_fd) {
     }
 }
 
-int create_epoll_instance() {
-    int epoll_fd = epoll_create1(0);
-    if (epoll_fd == -1) {
-        perror("Error en epoll_create1");
-        exit(EXIT_FAILURE);
-    }
-    return epoll_fd;
-}
+void handle_connections(int server_fd) {
+    struct io_uring ring;
+    io_uring_queue_init(QUEUE_DEPTH, &ring, 0);
 
-void register_server_socket_in_epoll(int epoll_fd, int server_fd) {
-    struct epoll_event event;
-    event.events = EPOLLIN;
-    event.data.fd = server_fd;
-    if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, server_fd, &event) == -1) {
-        perror("Error en epoll_ctl");
-        close(server_fd);
-        close(epoll_fd);
-        exit(EXIT_FAILURE);
-    }
-}
-
-void handle_connections(int epoll_fd, int server_fd) {
-    struct epoll_event events[MAX_EVENTS];
     struct sockaddr_in client_addr;
     socklen_t client_len = sizeof(client_addr);
 
     while (1) {
-        int nfds = epoll_wait(epoll_fd, events, MAX_EVENTS, -1);
-        if (nfds == -1) {
-            if (errno == EINTR) {
-                continue; // Retry if interrupted by signal
-            }
-            perror("epoll_wait");
-            break;
+        int client_fd = accept(server_fd, (struct sockaddr *)&client_addr, &client_len);
+        if (client_fd == -1) {
+            perror("Error en accept");
+            continue;
         }
 
-        for (int i = 0; i < nfds; i++) {
-            if (events[i].data.fd == server_fd) {
-                int client_fd = accept(server_fd, (struct sockaddr *)&client_addr, &client_len);
-                if (client_fd == -1) {
-                    perror("Error en accept");
-                    continue;
-                }
+        printf("Nueva conexión de %s:%d\n",
+               inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
 
-                printf("Nueva conexión de %s:%d\n",
-                       inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
-
-                int *pclient_fd = malloc(sizeof(int));
-                *pclient_fd = client_fd;
-                pthread_t thread;
-                pthread_create(&thread, NULL, handle_client, pclient_fd);
-                pthread_detach(thread);
-            }
-        }
+        int *pclient_fd = malloc(sizeof(int));
+        *pclient_fd = client_fd;
+        pthread_t thread;
+        pthread_create(&thread, NULL, handle_client, pclient_fd);
+        pthread_detach(thread);
     }
+
+    io_uring_queue_exit(&ring);
 }
 
 void start_proxy() {
-    int server_fd, epoll_fd;
+    int server_fd;
     server_fd = create_server_socket();
     configure_server_socket(server_fd);
     struct sockaddr_in server_addr;
     bind_server_socket(server_fd, &server_addr);
     start_listening(server_fd);
-    epoll_fd = create_epoll_instance();
-    register_server_socket_in_epoll(epoll_fd, server_fd);
     printf("Servidor escuchando en el puerto %d...\n", SERVER_PORT);
-    handle_connections(epoll_fd, server_fd);
+    handle_connections(server_fd);
     close(server_fd);
-    close(epoll_fd);
 }

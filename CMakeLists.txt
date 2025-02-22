@@ -7,4 +7,10 @@ file(GLOB SRC_FILES ${PROJECT_SOURCE_DIR}/src/*.c)
 
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fstack-protector-strong -D_FORTIFY_SOURCE=2 -fPIE -pie -Wl,-z,relro,-z,now")
 
+# Añadir la biblioteca liburing
+find_library(LIBURING liburing.so)
+
 add_executable(MiEjecutable ${SRC_FILES})
+
+# Enlazar la biblioteca liburing
+target_link_libraries(MiEjecutable ${LIBURING})
